@@ -260,7 +260,7 @@
         // ==========================================
         // VARIABLES GLOBALES
         // ==========================================
-        const APP_VERSION = '1.2.0'; // <-- ¡Actualiza la versión aquí!
+        const APP_VERSION = '1.3.0'; // <-- ¡Actualiza la versión aquí!
 
         let currentScannerMode = 'barcode'; // 'barcode' o 'qr'
         let isScanning = false;
@@ -364,18 +364,36 @@
         // Escáner unificado con ZXing
         async function startUnifiedScanner() {
             zxingCodeReader = new ZXing.BrowserMultiFormatReader();
-            scannerStatus.textContent = 'Apunte la cámara al código...';
-            
+            const videoElement = document.getElementById('scanner-video');
+
             try {
-                const result = await zxingCodeReader.decodeFromVideoDevice(undefined, 'scanner-video', (result, err) => {
-                    // Este callback se ejecuta en cada frame
-                    if (result && isScanning) { // isScanning previene múltiples detecciones
-                        onCodeScanned(result.getText());
-                    } else if (err && !(err instanceof ZXing.NotFoundException)) {
-                        console.error('Error de decodificación de ZXing:', err);
-                    }
+                // 1. Obtenemos los dispositivos de video para elegir la cámara trasera
+                const videoInputDevices = await zxingCodeReader.listVideoInputDevices();
+                const selectedDeviceId = videoInputDevices.length > 1
+                    ? videoInputDevices.find(device => device.label.toLowerCase().includes('back'))?.deviceId || videoInputDevices[0].deviceId
+                    : videoInputDevices[0]?.deviceId;
+
+                if (!selectedDeviceId) {
+                    throw new Error('No se encontró ninguna cámara.');
+                }
+
+                scannerStatus.textContent = 'Apunte la cámara al código...';
+
+                // 2. Iniciamos el stream y lo mostramos en el video
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { deviceId: { exact: selectedDeviceId } }
                 });
-            } catch (err) { // Este error se captura si la cámara no se puede iniciar
+                videoElement.srcObject = stream;
+                await videoElement.play();
+
+                // 3. Le decimos a ZXing que decodifique desde el elemento de video que ya está funcionando
+                zxingCodeReader.decodeFromVideoElement(videoElement, (result, err) => {
+                    if (result && isScanning) {
+                        onCodeScanned(result.getText());
+                    }
+                }).catch(err => console.error(err));
+
+            } catch (err) {
                 console.error('Error al acceder a la cámara:', err);
                 handleCameraError(err);
             }
