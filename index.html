@@ -8,14 +8,8 @@
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
 
-    <!-- QuaggaJS para códigos de barras -->
-    <script src="https://cdn.jsdelivr.net/npm/@ericblade/quagga2@1.8.4/dist/quagga.min.js"></script>
-
-    <!-- jsQR para códigos QR -->
-    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
-
-    <!-- SheetJS para exportación a Excel -->
-    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <!-- ZXing: Librería unificada para Códigos de Barras y QR -->
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/@zxing/library@0.20.0/umd/zxing.min.js"></script>
 
     <style>
         /* Estilos personalizados para el escáner */
@@ -109,17 +103,13 @@
                         <div class="scan-line"></div>
                     </div>
                 </div>
-                <div class="mt-4 flex gap-2">
+                <div class="mt-4">
                     <button id="stop-scan-btn"
-                            class="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-4 rounded-lg transition duration-200">
+                            class="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-4 rounded-lg transition duration-200">
                         ⏹️ Detener Escaneo
                     </button>
-                    <button id="toggle-scanner-btn"
-                            class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg transition duration-200">
-                        🔄 Cambiar a QR
-                    </button>
                 </div>
-                <p class="text-center text-gray-600 mt-2" id="scanner-status">Escaneando códigos de barras...</p>
+                <p class="text-center text-gray-600 mt-2" id="scanner-status">Apunte la cámara al código...</p>
             </div>
 
             <!-- Entrada Manual -->
@@ -263,6 +253,10 @@
     </div>
 
     <script>
+        // Cargar SheetJS para Excel (se movió aquí para claridad)
+        const sheetJsScript = document.createElement('script');
+        sheetJsScript.src = "https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js";
+        document.head.appendChild(sheetJsScript);
         // ==========================================
         // VARIABLES GLOBALES
         // ==========================================
@@ -270,16 +264,14 @@
 
         let currentScannerMode = 'barcode'; // 'barcode' o 'qr'
         let isScanning = false;
-        let qrStream = null;
-        let qrAnimationFrame = null;
         let audioCtx; // Para el sonido de "bip"
+        let zxingCodeReader; // Lector de códigos unificado
 
         // ==========================================
         // ELEMENTOS DEL DOM
         // ==========================================
         const startScanBtn = document.getElementById('start-scan-btn');
         const stopScanBtn = document.getElementById('stop-scan-btn');
-        const toggleScannerBtn = document.getElementById('toggle-scanner-btn');
         const scannerContainer = document.getElementById('scanner-container');
         const scannerStatus = document.getElementById('scanner-status');
         const successMessage = document.getElementById('success-message');
@@ -299,7 +291,6 @@
         const noRecords = document.getElementById('no-records');
         const totalCount = document.getElementById('total-count');
         const qrCanvas = document.getElementById('qr-canvas');
-        const qrVideo = document.getElementById('scanner-video');
 
         const manualEntryForm = document.getElementById('manual-entry-form');
         const manualTrackingInput = document.getElementById('manual-tracking-input');
@@ -318,7 +309,6 @@
         function setupEventListeners() {
             startScanBtn.addEventListener('click', startScanning);
             stopScanBtn.addEventListener('click', stopScanning);
-            toggleScannerBtn.addEventListener('click', toggleScannerMode);
             packageForm.addEventListener('submit', handleFormSubmit);
             cancelBtn.addEventListener('click', cancelForm);
             exportExcelBtn.addEventListener('click', exportToExcel);
@@ -344,13 +334,10 @@
             scannerContainer.classList.remove('hidden');
             startScanBtn.classList.add('hidden');
             isScanning = true;
+            scannerStatus.textContent = 'Iniciando cámara...';
 
-            if (currentScannerMode === 'barcode') {
-                startBarcodeScanner();
-            } else {
-                await startQRScanner();
-            }
-
+            await startUnifiedScanner();
+            
             // Inicializar el contexto de audio con un gesto del usuario
             initAudioContext();
 
@@ -363,132 +350,40 @@
             scannerContainer.classList.add('hidden');
             startScanBtn.classList.remove('hidden');
 
-            if (currentScannerMode === 'barcode') {
-                stopBarcodeScanner();
-            } else {
-                stopQRScanner();
+            if (zxingCodeReader) {
+                zxingCodeReader.reset();
             }
         }
 
-        async function toggleScannerMode() {
-            await stopScanning(); // Esperar a que se detenga completamente
-            currentScannerMode = currentScannerMode === 'barcode' ? 'qr' : 'barcode';
-            toggleScannerBtn.textContent = currentScannerMode === 'barcode' ? '🔄 Cambiar a QR' : '🔄 Cambiar a Código de Barras';
-            await startScanning();
-        }
-
-        // Escáner de códigos de barras con QuaggaJS
-        function startBarcodeScanner() {
-            scannerStatus.textContent = 'Escaneando códigos de barras...';
-
-            Quagga.init({
-                inputStream: {
-                    name: "Live",
-                    type: "LiveStream",
-                    target: document.querySelector('#scanner-video'),
-                    constraints: {
-                        width: 640,
-                        height: 480,
-                        facingMode: "environment"
-                    },
-                },
-                decoder: {
-                    readers: [
-                        "code_128_reader",
-                        "ean_reader",
-                        "ean_8_reader",
-                        "code_39_reader",
-                        "code_39_vin_reader",
-                        "codabar_reader",
-                        "upc_reader",
-                        "upc_e_reader",
-                        "i2of5_reader"
-                    ]
-                }
-            }, function(err) {
-                if (err) {
-                    console.error('Error al iniciar QuaggaJS:', err);
-                    handleCameraError(err);
-                    return;
-                }
-                Quagga.start();
-            });
-
-            Quagga.onDetected(handleBarcodeDetected);
-        }
-
-        function stopBarcodeScanner() {
-            if (Quagga) {
-                Quagga.stop();
-                Quagga.offDetected(handleBarcodeDetected);
-            }
-        }
-
-        function handleBarcodeDetected(result) {
-            if (!isScanning) return;
-
-            const code = result.codeResult.code;
-            if (code && code.length > 3) {
-                onCodeScanned(code);
-            }
-        }
-
-        // Escáner de códigos QR con jsQR
-        async function startQRScanner() {
-            scannerStatus.textContent = 'Escaneando códigos QR...';
-
+        // Escáner unificado con ZXing
+        async function startUnifiedScanner() {
+            zxingCodeReader = new ZXing.BrowserMultiFormatReader();
+            scannerStatus.textContent = 'Apunte la cámara al código...';
+            
             try {
-                qrStream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: "environment" }
+                const result = await zxingCodeReader.decodeFromVideoDevice(undefined, 'scanner-video', (result, err) => {
+                    if (result) {
+                        // Una vez que se detecta un código, no necesitamos seguir procesando
+                        if (isScanning) {
+                            onCodeScanned(result.getText());
+                        }
+                    }
+                    if (err && !(err instanceof ZXing.NotFoundException)) {
+                        console.error('Error de decodificación de ZXing:', err);
+                    }
                 });
-
-                qrVideo.srcObject = qrStream;
-                qrVideo.setAttribute("playsinline", true);
-                qrVideo.play();
-
-                requestAnimationFrame(tickQR);
             } catch (err) {
                 console.error('Error al acceder a la cámara:', err);
                 handleCameraError(err);
             }
         }
 
-        function tickQR() {
-            if (!isScanning) return;
-
-            if (qrVideo.readyState === qrVideo.HAVE_ENOUGH_DATA) {
-                qrCanvas.height = qrVideo.videoHeight;
-                qrCanvas.width = qrVideo.videoWidth;
-                const ctx = qrCanvas.getContext("2d");
-                ctx.drawImage(qrVideo, 0, 0, qrCanvas.width, qrCanvas.height);
-                const imageData = ctx.getImageData(0, 0, qrCanvas.width, qrCanvas.height);
-                const code = jsQR(imageData.data, imageData.width, imageData.height);
-
-                if (code && code.data) {
-                    onCodeScanned(code.data);
-                    return;
-                }
-            }
-
-            qrAnimationFrame = requestAnimationFrame(tickQR);
-        }
-
-        function stopQRScanner() {
-            if (qrStream) {
-                qrStream.getTracks().forEach(track => track.stop());
-                qrStream = null;
-            }
-            if (qrAnimationFrame) {
-                cancelAnimationFrame(qrAnimationFrame);
-                qrAnimationFrame = null;
-            }
-            qrVideo.srcObject = null;
-        }
-
         // ==========================================
         // MANEJO DE CÓDIGO ESCANEADO
         // ==========================================
         function onCodeScanned(code, source = 'scanner') {
+            if (!isScanning && source === 'scanner') return;
+
             // Evitar múltiples detecciones si ya se está procesando un código
             if (isScanning && source === 'scanner') {
                  // Si la fuente es el escáner, nos aseguramos de que esté activo
@@ -710,6 +605,11 @@
         // EXPORTACIÓN A EXCEL
         // ==========================================
         function exportToExcel() {
+            if (typeof XLSX === 'undefined') {
+                alert('La librería de exportación aún no ha cargado. Por favor, espere un momento e intente de nuevo.');
+                return;
+            }
+
             const records = getRecords();
 
             if (records.length === 0) {
