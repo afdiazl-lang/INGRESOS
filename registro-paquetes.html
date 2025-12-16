@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Registro de Paquetes - Bodega</title>
+
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- QuaggaJS para códigos de barras -->
+    <script src="https://cdn.jsdelivr.net/npm/@ericblade/quagga2@1.8.4/dist/quagga.min.js"></script>
+
+    <!-- jsQR para códigos QR -->
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+
+    <!-- SheetJS para exportación a Excel -->
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+
+    <style>
+        /* Estilos personalizados para el escáner */
+        #scanner-container {
+            position: relative;
+            width: 100%;
+            max-width: 640px;
+            margin: 0 auto;
+        }
+
+        #scanner-video {
+            width: 100%;
+            height: auto;
+            border-radius: 0.5rem;
+        }
+
+        .scanner-overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 80%;
+            height: 50%;
+            border: 3px solid #10b981;
+            border-radius: 0.5rem;
+            box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
+        }
+
+        .scan-line {
+            position: absolute;
+            width: 100%;
+            height: 2px;
+            background: #10b981;
+            animation: scan 2s linear infinite;
+        }
+
+        @keyframes scan {
+            0%, 100% { top: 0; }
+            50% { top: 100%; }
+        }
+
+        /* Animación de éxito */
+        @keyframes success-pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+
+        .success-animation {
+            animation: success-pulse 0.5s ease-in-out;
+        }
+
+        /* Estilos para la tabla responsive */
+        .table-container {
+            overflow-x: auto;
+        }
+
+        /* Mejora visual para dispositivos móviles */
+        @media (max-width: 640px) {
+            .mobile-card {
+                border: 1px solid #e5e7eb;
+                border-radius: 0.5rem;
+                padding: 1rem;
+                margin-bottom: 1rem;
+                background: white;
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <div class="container mx-auto px-4 py-6 max-w-6xl">
+        <!-- Header -->
+        <header class="bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg shadow-lg p-6 mb-6">
+            <h1 class="text-3xl font-bold text-center">📦 Registro de Paquetes</h1>
+            <p class="text-center text-blue-100 mt-2">Sistema de Gestión de Bodega</p>
+        </header>
+
+        <!-- Sección de Escaneo -->
+        <div id="scan-section" class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <button id="start-scan-btn"
+                    class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-4 px-6 rounded-lg shadow-lg transition duration-200 transform hover:scale-105">
+                📷 Escanear Código
+            </button>
+
+            <!-- Contenedor del escáner (oculto por defecto) -->
+            <div id="scanner-container" class="hidden mt-4">
+                <div class="relative">
+                    <video id="scanner-video" playsinline></video>
+                    <canvas id="qr-canvas" class="hidden"></canvas>
+                    <div class="scanner-overlay">
+                        <div class="scan-line"></div>
+                    </div>
+                </div>
+                <div class="mt-4 flex gap-2">
+                    <button id="stop-scan-btn"
+                            class="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-4 rounded-lg transition duration-200">
+                        ⏹️ Detener Escaneo
+                    </button>
+                    <button id="toggle-scanner-btn"
+                            class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg transition duration-200">
+                        🔄 Cambiar a QR
+                    </button>
+                </div>
+                <p class="text-center text-gray-600 mt-2" id="scanner-status">Escaneando códigos de barras...</p>
+            </div>
+
+            <!-- Entrada Manual -->
+            <div class="mt-6 pt-4 border-t border-gray-200">
+                <p class="text-center text-gray-500 mb-3 text-sm">¿El código está dañado? Ingréselo manualmente:</p>
+                <form id="manual-entry-form" class="flex flex-col sm:flex-row gap-2">
+                    <input type="text" id="manual-tracking-input"
+                           placeholder="Número de seguimiento manual"
+                           class="flex-grow w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <button type="submit"
+                            class="bg-gray-700 hover:bg-gray-800 text-white font-bold py-3 px-5 rounded-lg transition duration-200">
+                        Continuar ➡️
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Mensaje de éxito -->
+        <div id="success-message" class="hidden bg-green-100 border-l-4 border-green-500 text-green-700 p-4 rounded-lg mb-6">
+            <p class="font-bold">✅ Código escaneado exitosamente</p>
+            <p id="success-code" class="text-sm"></p>
+        </div>
+
+        <!-- Formulario de Registro -->
+        <div id="form-section" class="bg-white rounded-lg shadow-md p-6 mb-6 hidden">
+            <h2 class="text-2xl font-bold text-gray-800 mb-4">📝 Registro de Paquete</h2>
+            <form id="package-form">
+                <div class="mb-4">
+                    <label class="block text-gray-700 font-bold mb-2" for="tracking-number">
+                        Número de Seguimiento *
+                    </label>
+                    <input type="text"
+                           id="tracking-number"
+                           required
+                           class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                           placeholder="Ingrese o escanee el número de seguimiento">
+                </div>
+
+                <div class="mb-4">
+                    <label class="block text-gray-700 font-bold mb-2" for="customer-name">
+                        Nombre del Cliente *
+                    </label>
+                    <input type="text"
+                           id="customer-name"
+                           required
+                           class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                           placeholder="Ingrese el nombre del cliente">
+                </div>
+
+                <div class="mb-4 flex items-center">
+                    <input type="checkbox" id="keep-customer-checkbox" class="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
+                    <label for="keep-customer-checkbox" class="ml-2 block text-sm text-gray-900">
+                        Mantener cliente y notas para el siguiente registro
+                    </label>
+                </div>
+
+
+
+                <div class="mb-4">
+                    <label class="block text-gray-700 font-bold mb-2" for="weight">
+                        Peso (opcional)
+                    </label>
+                    <input type="text"
+                           id="weight"
+                           class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                           placeholder="Ej: 2.5 kg, 5 lbs">
+                </div>
+
+                <div class="mb-6">
+                    <label class="block text-gray-700 font-bold mb-2" for="notes">
+                        Notas Adicionales
+                    </label>
+                    <textarea id="notes"
+                              rows="3"
+                              class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              placeholder="Información adicional (opcional)"></textarea>
+                </div>
+
+                <div class="flex gap-3">
+                    <button type="submit"
+                            class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg transition duration-200">
+                        💾 Guardar Registro
+                    </button>
+                    <button type="button"
+                            id="cancel-btn"
+                            class="flex-1 bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-6 rounded-lg transition duration-200">
+                        ❌ Cancelar
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Lista de Registros -->
+        <div class="bg-white rounded-lg shadow-md p-6">
+            <div class="flex justify-between items-center mb-4 flex-wrap gap-3">
+                <h2 class="text-2xl font-bold text-gray-800">📋 Registros</h2>
+                <div class="flex gap-2">
+                    <button id="export-excel-btn"
+                            class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg transition duration-200 text-sm">
+                        📥 Exportar Excel
+                    </button>
+                    <button id="clear-all-btn"
+                            class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg transition duration-200 text-sm">
+                        🗑️ Limpiar Todo
+                    </button>
+                </div>
+            </div>
+
+            <div id="records-count" class="text-gray-600 mb-4">
+                Total de registros: <span id="total-count" class="font-bold">0</span>
+            </div>
+
+            <!-- Vista de escritorio: Tabla -->
+            <div class="hidden md:block table-container">
+                <table class="w-full">
+                    <thead class="bg-gray-200">
+                        <tr>
+                            <th class="px-4 py-3 text-left text-gray-700 font-bold">Nº Seguimiento</th>
+                            <th class="px-4 py-3 text-left text-gray-700 font-bold">Cliente</th>
+                            <th class="px-4 py-3 text-left text-gray-700 font-bold">Notas</th>
+                            <th class="px-4 py-3 text-left text-gray-700 font-bold">Peso</th>
+                            <th class="px-4 py-3 text-left text-gray-700 font-bold">Fecha/Hora</th>
+                            <th class="px-4 py-3 text-center text-gray-700 font-bold">Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody id="records-table">
+                        <!-- Los registros se cargarán aquí dinámicamente -->
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Vista móvil: Cards -->
+            <div id="records-mobile" class="md:hidden">
+                <!-- Los registros se cargarán aquí como cards -->
+            </div>
+
+            <div id="no-records" class="text-center text-gray-500 py-8">
+                No hay registros aún. Comienza escaneando un paquete.
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ==========================================
+        // VARIABLES GLOBALES
+        // ==========================================
+        let currentScannerMode = 'barcode'; // 'barcode' o 'qr'
+        let isScanning = false;
+        let qrStream = null;
+        let qrAnimationFrame = null;
+        let audioCtx; // Para el sonido de "bip"
+
+        // ==========================================
+        // ELEMENTOS DEL DOM
+        // ==========================================
+        const startScanBtn = document.getElementById('start-scan-btn');
+        const stopScanBtn = document.getElementById('stop-scan-btn');
+        const toggleScannerBtn = document.getElementById('toggle-scanner-btn');
+        const scannerContainer = document.getElementById('scanner-container');
+        const scannerStatus = document.getElementById('scanner-status');
+        const successMessage = document.getElementById('success-message');
+        const successCode = document.getElementById('success-code');
+        const formSection = document.getElementById('form-section');
+        const packageForm = document.getElementById('package-form');
+        const trackingNumberInput = document.getElementById('tracking-number');
+        const customerNameInput = document.getElementById('customer-name');
+        const keepCustomerCheckbox = document.getElementById('keep-customer-checkbox');
+        const notesInput = document.getElementById('notes');
+        const weightInput = document.getElementById('weight');
+        const cancelBtn = document.getElementById('cancel-btn');
+        const exportExcelBtn = document.getElementById('export-excel-btn');
+        const clearAllBtn = document.getElementById('clear-all-btn');
+        const recordsTable = document.getElementById('records-table');
+        const recordsMobile = document.getElementById('records-mobile');
+        const noRecords = document.getElementById('no-records');
+        const totalCount = document.getElementById('total-count');
+        const qrCanvas = document.getElementById('qr-canvas');
+        const qrVideo = document.getElementById('scanner-video');
+
+        const manualEntryForm = document.getElementById('manual-entry-form');
+        const manualTrackingInput = document.getElementById('manual-tracking-input');
+        // ==========================================
+        // INICIALIZACIÓN
+        // ==========================================
+        document.addEventListener('DOMContentLoaded', () => {
+            loadRecords();
+            setupEventListeners();
+        });
+
+        // ==========================================
+        // EVENT LISTENERS
+        // ==========================================
+        function setupEventListeners() {
+            startScanBtn.addEventListener('click', startScanning);
+            stopScanBtn.addEventListener('click', stopScanning);
+            toggleScannerBtn.addEventListener('click', toggleScannerMode);
+            packageForm.addEventListener('submit', handleFormSubmit);
+            cancelBtn.addEventListener('click', cancelForm);
+            exportExcelBtn.addEventListener('click', exportToExcel);
+            clearAllBtn.addEventListener('click', clearAllRecords);
+            manualEntryForm.addEventListener('submit', handleManualEntry);
+        }
+
+        // ==========================================
+        // FUNCIONES DE ESCANEO
+        // ==========================================
+
+        function initAudioContext() {
+            if (!audioCtx) {
+                try {
+                    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                } catch (e) {
+                    console.error("Web Audio API no es compatible con este navegador.");
+                }
+            }
+        }
+
+        async function startScanning() {
+            scannerContainer.classList.remove('hidden');
+            startScanBtn.classList.add('hidden');
+            isScanning = true;
+
+            if (currentScannerMode === 'barcode') {
+                startBarcodeScanner();
+            } else {
+                await startQRScanner();
+            }
+
+            // Inicializar el contexto de audio con un gesto del usuario
+            initAudioContext();
+
+            // Limpiar la entrada manual por si había algo escrito
+            manualTrackingInput.value = '';
+        }
+
+        function stopScanning() {
+            isScanning = false;
+            scannerContainer.classList.add('hidden');
+            startScanBtn.classList.remove('hidden');
+
+            if (currentScannerMode === 'barcode') {
+                stopBarcodeScanner();
+            } else {
+                stopQRScanner();
+            }
+        }
+
+        async function toggleScannerMode() {
+            await stopScanning(); // Esperar a que se detenga completamente
+            currentScannerMode = currentScannerMode === 'barcode' ? 'qr' : 'barcode';
+            toggleScannerBtn.textContent = currentScannerMode === 'barcode' ? '🔄 Cambiar a QR' : '🔄 Cambiar a Código de Barras';
+            await startScanning();
+        }
+
+        // Escáner de códigos de barras con QuaggaJS
+        function startBarcodeScanner() {
+            scannerStatus.textContent = 'Escaneando códigos de barras...';
+
+            Quagga.init({
+                inputStream: {
+                    name: "Live",
+                    type: "LiveStream",
+                    target: document.querySelector('#scanner-video'),
+                    constraints: {
+                        width: 640,
+                        height: 480,
+                        facingMode: "environment"
+                    },
+                },
+                decoder: {
+                    readers: [
+                        "code_128_reader",
+                        "ean_reader",
+                        "ean_8_reader",
+                        "code_39_reader",
+                        "code_39_vin_reader",
+                        "codabar_reader",
+                        "upc_reader",
+                        "upc_e_reader",
+                        "i2of5_reader"
+                    ]
+                }
+            }, function(err) {
+                if (err) {
+                    console.error('Error al iniciar QuaggaJS:', err);
+                    alert('Error al acceder a la cámara. Por favor, verifique los permisos.');
+                    stopScanning();
+                    return;
+                }
+                Quagga.start();
+            });
+
+            Quagga.onDetected(handleBarcodeDetected);
+        }
+
+        function stopBarcodeScanner() {
+            if (Quagga) {
+                Quagga.stop();
+                Quagga.offDetected(handleBarcodeDetected);
+            }
+        }
+
+        function handleBarcodeDetected(result) {
+            if (!isScanning) return;
+
+            const code = result.codeResult.code;
+            if (code && code.length > 3) {
+                onCodeScanned(code);
+            }
+        }
+
+        // Escáner de códigos QR con jsQR
+        async function startQRScanner() {
+            scannerStatus.textContent = 'Escaneando códigos QR...';
+
+            try {
+                qrStream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: "environment" }
+                });
+
+                qrVideo.srcObject = qrStream;
+                qrVideo.setAttribute("playsinline", true);
+                qrVideo.play();
+
+                requestAnimationFrame(tickQR);
+            } catch (err) {
+                console.error('Error al acceder a la cámara:', err);
+                alert('Error al acceder a la cámara. Por favor, verifique los permisos.');
+                stopScanning();
+            }
+        }
+
+        function tickQR() {
+            if (!isScanning) return;
+
+            if (qrVideo.readyState === qrVideo.HAVE_ENOUGH_DATA) {
+                qrCanvas.height = qrVideo.videoHeight;
+                qrCanvas.width = qrVideo.videoWidth;
+                const ctx = qrCanvas.getContext("2d");
+                ctx.drawImage(qrVideo, 0, 0, qrCanvas.width, qrCanvas.height);
+                const imageData = ctx.getImageData(0, 0, qrCanvas.width, qrCanvas.height);
+                const code = jsQR(imageData.data, imageData.width, imageData.height);
+
+                if (code && code.data) {
+                    onCodeScanned(code.data);
+                    return;
+                }
+            }
+
+            qrAnimationFrame = requestAnimationFrame(tickQR);
+        }
+
+        function stopQRScanner() {
+            if (qrStream) {
+                qrStream.getTracks().forEach(track => track.stop());
+                qrStream = null;
+            }
+            if (qrAnimationFrame) {
+                cancelAnimationFrame(qrAnimationFrame);
+                qrAnimationFrame = null;
+            }
+            qrVideo.srcObject = null;
+        }
+
+        // ==========================================
+        // MANEJO DE CÓDIGO ESCANEADO
+        // ==========================================
+        function onCodeScanned(code, source = 'scanner') {
+            // Evitar múltiples detecciones si ya se está procesando un código
+            if (isScanning && source === 'scanner') {
+                 // Si la fuente es el escáner, nos aseguramos de que esté activo
+            } else if (source === 'manual') {
+                // Si es manual, permitimos continuar
+            } else {
+                return; // Ignorar si no cumple las condiciones
+            }
+
+            // Reproducir sonido de éxito
+            playBeepSound();
+
+            // Detener el escaneo solo si se originó desde la cámara
+            if (source === 'scanner') {
+                stopScanning();
+            }
+
+            // Mostrar mensaje de éxito
+            successCode.textContent = `Código: ${code}`;
+            successMessage.classList.remove('hidden');
+            successMessage.classList.add('success-animation');
+
+            // Llenar el formulario
+            trackingNumberInput.value = code;
+            formSection.classList.remove('hidden');
+
+            // Hacer scroll al formulario
+            formSection.scrollIntoView({ behavior: 'smooth' });
+
+            // Enfocar el campo de nombre del cliente
+            setTimeout(() => {
+                customerNameInput.focus();
+            }, 500);
+
+            // Ocultar mensaje de éxito después de 3 segundos
+            setTimeout(() => {
+                successMessage.classList.add('hidden');
+            }, 3000);
+        }
+
+        // ==========================================
+        // MANEJO DEL FORMULARIO
+        // ==========================================
+        function handleFormSubmit(e) {
+            e.preventDefault();
+
+            const record = {
+                id: Date.now(),
+                trackingNumber: trackingNumberInput.value.trim(),
+                customerName: customerNameInput.value.trim(),
+                notes: notesInput.value.trim(),
+                weight: weightInput.value.trim(),
+                timestamp: new Date().toISOString()
+            };
+
+            // Validación
+            if (!record.trackingNumber || !record.customerName) {
+                alert('Por favor, complete todos los campos obligatorios.');
+                return;
+            }
+
+            // Guardar en localStorage
+            saveRecord(record);
+
+            // Limpiar formulario o mantener datos del cliente
+            if (keepCustomerCheckbox.checked) {
+                // Solo limpiar el número de seguimiento y ocultar el formulario
+                trackingNumberInput.value = '';
+                formSection.classList.add('hidden');
+            } else {
+                packageForm.reset();
+                formSection.classList.add('hidden');
+            }
+
+            // Recargar registros
+            loadRecords();
+
+            // Mostrar confirmación
+            alert('✅ Paquete registrado exitosamente');
+
+            // Hacer scroll a la tabla de registros
+            const recordsSection = document.getElementById('records-mobile').closest('.bg-white');
+            if (recordsSection) {
+                recordsSection.scrollIntoView({ behavior: 'smooth' });
+            }
+        }
+
+        function cancelForm() {
+            if (confirm('¿Desea cancelar el registro actual?')) {
+                packageForm.reset();
+                formSection.classList.add('hidden');
+                successMessage.classList.add('hidden');
+            }
+        }
+
+        // ==========================================
+        // MANEJO DE ENTRADA MANUAL
+        // ==========================================
+        function handleManualEntry(e) {
+            e.preventDefault();
+            const code = manualTrackingInput.value.trim();
+
+            if (code) {
+                onCodeScanned(code, 'manual'); // Indicar que la fuente es manual
+                manualTrackingInput.value = ''; // Limpiar el input
+            } else {
+                alert('Por favor, ingrese un número de seguimiento.');
+            }
+        }
+
+        // ==========================================
+        // LOCAL STORAGE
+        // ==========================================
+        function saveRecord(record) {
+            const records = getRecords();
+            records.push(record);
+            localStorage.setItem('packageRecords', JSON.stringify(records));
+        }
+
+        function getRecords() {
+            const records = localStorage.getItem('packageRecords');
+            return records ? JSON.parse(records) : [];
+        }
+
+        function deleteRecord(id) {
+            if (confirm('¿Está seguro de eliminar este registro?')) {
+                const records = getRecords().filter(r => r.id !== id);
+                localStorage.setItem('packageRecords', JSON.stringify(records));
+                loadRecords();
+            }
+        }
+
+        function clearAllRecords() {
+            if (confirm('⚠️ ¿Está seguro de eliminar TODOS los registros? Esta acción no se puede deshacer.')) {
+                if (confirm('Confirme nuevamente: Se eliminarán todos los registros permanentemente.')) {
+                    localStorage.removeItem('packageRecords');
+                    loadRecords();
+                    alert('Todos los registros han sido eliminados.');
+                }
+            }
+        }
+
+        // ==========================================
+        // RENDERIZADO DE REGISTROS
+        // ==========================================
+        function loadRecords() {
+            const records = getRecords();
+
+            // Actualizar contador
+            totalCount.textContent = records.length;
+
+            if (records.length === 0) {
+                noRecords.classList.remove('hidden');
+                recordsTable.innerHTML = '';
+                recordsMobile.innerHTML = '';
+                return;
+            }
+
+            noRecords.classList.add('hidden');
+
+            // Ordenar por timestamp descendente (más reciente primero)
+            records.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+            // Renderizar tabla (desktop)
+            recordsTable.innerHTML = records.map(record => `
+                <tr class="border-b hover:bg-gray-50">
+                    <td class="px-4 py-3 font-mono text-sm">${escapeHtml(record.trackingNumber)}</td>
+                    <td class="px-4 py-3">${escapeHtml(record.customerName)}</td>
+                    <td class="px-4 py-3 text-sm text-gray-600">${escapeHtml(record.notes || '-')}</td>
+                    <td class="px-4 py-3 text-sm">${escapeHtml(record.weight || '-')}</td>
+                    <td class="px-4 py-3 text-sm">${formatDateTime(record.timestamp)}</td>
+                    <td class="px-4 py-3 text-center">
+                        <button onclick="deleteRecord(${record.id})"
+                                class="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded text-sm transition duration-200">
+                            🗑️
+                        </button>
+                    </td>
+                </tr>
+            `).join('');
+
+            // Renderizar cards (móvil)
+            recordsMobile.innerHTML = records.map(record => `
+                <div class="mobile-card">
+                    <div class="flex justify-between items-start mb-2">
+                        <div class="flex-1">
+                            <p class="text-xs text-gray-500 mb-1">Número de Seguimiento</p>
+                            <p class="font-mono font-bold text-sm break-all">${escapeHtml(record.trackingNumber)}</p>
+                        </div>
+                        <button onclick="deleteRecord(${record.id})"
+                                class="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded text-sm ml-2">
+                            🗑️
+                        </button>
+                    </div>
+                    <div class="mb-2">
+                        <p class="text-xs text-gray-500">Cliente</p>
+                        <p class="font-semibold">${escapeHtml(record.customerName)}</p>
+                    </div>
+                    ${record.notes ? `
+                        <div class="mb-2">
+                            <p class="text-xs text-gray-500">Notas</p>
+                            <p class="text-sm text-gray-600">${escapeHtml(record.notes)}</p>
+                        </div>
+                    ` : ''}
+                    ${record.weight ? `
+                        <div class="mb-2">
+                            <p class="text-xs text-gray-500">Peso</p>
+                            <p class="text-sm">${escapeHtml(record.weight)}</p>
+                        </div>
+                    ` : ''}
+                    <div>
+                        <p class="text-xs text-gray-500">Fecha y Hora</p>
+                        <p class="text-sm">${formatDateTime(record.timestamp)}</p>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // ==========================================
+        // EXPORTACIÓN A EXCEL
+        // ==========================================
+        function exportToExcel() {
+            const records = getRecords();
+
+            if (records.length === 0) {
+                alert('No hay registros para exportar.');
+                return;
+            }
+
+            // Preparar datos para Excel
+            const data = records.map(record => ({
+                'Número de Seguimiento': record.trackingNumber,
+                'Nombre del Cliente': record.customerName,
+                'Notas': record.notes || '',
+                'Peso': record.weight || '',
+                'Fecha y Hora': formatDateTime(record.timestamp)
+            }));
+
+            // Crear libro de Excel
+            const ws = XLSX.utils.json_to_sheet(data);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Registros");
+
+            // Ajustar ancho de columnas
+            const colWidths = [
+                { wch: 25 }, // Número de Seguimiento
+                { wch: 30 }, // Nombre del Cliente
+                { wch: 40 }, // Notas
+                { wch: 15 }, // Peso
+                { wch: 20 }  // Fecha y Hora
+            ];
+            ws['!cols'] = colWidths;
+
+            // Generar archivo
+            const fileName = `registros-paquetes-${formatDateForFilename()}.xlsx`;
+            XLSX.writeFile(wb, fileName);
+
+            alert(`✅ Archivo exportado: ${fileName}`);
+        }
+
+        // ==========================================
+        // UTILIDADES
+        // ==========================================
+        function formatDateTime(timestamp) {
+            const date = new Date(timestamp);
+            const day = String(date.getDate()).padStart(2, '0');
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const year = date.getFullYear();
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+            return `${day}/${month}/${year} ${hours}:${minutes}`;
+        }
+
+        function formatDateForFilename() {
+            const date = new Date();
+            const day = String(date.getDate()).padStart(2, '0');
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const year = date.getFullYear();
+            return `${year}${month}${day}`;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function playBeepSound() {
+            if (!audioCtx) return;
+
+            // Reanudar el contexto si está suspendido (políticas del navegador)
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+
+            oscillator.type = 'sine'; // Un tono limpio
+            oscillator.frequency.setValueAtTime(880, audioCtx.currentTime); // Frecuencia del bip (nota A5)
+            gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime); // Volumen
+
+            oscillator.start(audioCtx.currentTime);
+            oscillator.stop(audioCtx.currentTime + 0.1); // Duración del bip: 0.1 segundos
+        }
+    </script>
+</body>
+</html>
