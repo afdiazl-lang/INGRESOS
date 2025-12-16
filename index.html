@@ -260,7 +260,7 @@
         // ==========================================
         // VARIABLES GLOBALES
         // ==========================================
-        const APP_VERSION = '1.0.0'; // <-- ¡Actualiza la versión aquí!
+        const APP_VERSION = '1.2.0'; // <-- ¡Actualiza la versión aquí!
 
         let currentScannerMode = 'barcode'; // 'barcode' o 'qr'
         let isScanning = false;
@@ -350,7 +350,13 @@
             scannerContainer.classList.add('hidden');
             startScanBtn.classList.remove('hidden');
 
+            // Detiene el lector de ZXing y libera la cámara
             if (zxingCodeReader) {
+                // Detener explícitamente las pistas de video para apagar la luz de la cámara
+                const videoElement = document.getElementById('scanner-video');
+                if (videoElement && videoElement.srcObject) {
+                    videoElement.srcObject.getTracks().forEach(track => track.stop());
+                }
                 zxingCodeReader.reset();
             }
         }
@@ -362,17 +368,14 @@
             
             try {
                 const result = await zxingCodeReader.decodeFromVideoDevice(undefined, 'scanner-video', (result, err) => {
-                    if (result) {
-                        // Una vez que se detecta un código, no necesitamos seguir procesando
-                        if (isScanning) {
-                            onCodeScanned(result.getText());
-                        }
-                    }
-                    if (err && !(err instanceof ZXing.NotFoundException)) {
+                    // Este callback se ejecuta en cada frame
+                    if (result && isScanning) { // isScanning previene múltiples detecciones
+                        onCodeScanned(result.getText());
+                    } else if (err && !(err instanceof ZXing.NotFoundException)) {
                         console.error('Error de decodificación de ZXing:', err);
                     }
                 });
-            } catch (err) {
+            } catch (err) { // Este error se captura si la cámara no se puede iniciar
                 console.error('Error al acceder a la cámara:', err);
                 handleCameraError(err);
             }
@@ -382,17 +385,10 @@
         // MANEJO DE CÓDIGO ESCANEADO
         // ==========================================
         function onCodeScanned(code, source = 'scanner') {
+            // Protección para evitar que se procesen múltiples códigos a la vez
             if (!isScanning && source === 'scanner') return;
-
-            // Evitar múltiples detecciones si ya se está procesando un código
-            if (isScanning && source === 'scanner') {
-                 // Si la fuente es el escáner, nos aseguramos de que esté activo
-            } else if (source === 'manual') {
-                // Si es manual, permitimos continuar
-            } else {
-                return; // Ignorar si no cumple las condiciones
-            }
-
+            isScanning = false; // Bloquear inmediatamente para evitar nuevas detecciones
+            
             // Reproducir sonido de éxito
             playBeepSound();
 
